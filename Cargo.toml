@@ -1,0 +1,11 @@
+[package]
+name = "rfcaf"
+version = "0.1.0"
+authors = ["likkoliu <kikkoliu69@gmail.com>"]
+description = "Read from the command line and file to obtain parameter configuration."
+edition = "2021"
+
+[dependencies]
+
+[[example]]
+name="func_verify"
