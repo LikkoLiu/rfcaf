@@ -6,6 +6,10 @@ description = "Read from the command line and file to obtain parameter configura
 edition = "2021"
 
 [dependencies]
+thiserror = "1.0"
+serde_derive = "1.0.149"
+serde = "1.0.149"
+toml = "0.5.9"
 
 [[example]]
 name="func_verify"
