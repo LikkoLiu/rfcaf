@@ -2,7 +2,7 @@
  * @Author: likkoliu
  * @Date: 2024-08-17 10:48:48
  * @LastEditors: Please set LastEditors
- * @LastEditTime: 2024-08-20 16:18:42
+ * @LastEditTime: 2024-08-20 17:13:02
  * @Description:
  */
 use serde_derive::Deserialize;
@@ -188,7 +188,19 @@ impl Console {
 
     /// Get instructions from the file
     pub fn file_read(&mut self, _prompt: &str) -> Result<String, DataError> {
-        let mut input = self.file_poll()?;
+        let mut input = if let Some((_, input)) = if let ConsoleStatus::InsAcqFromFile = self.current_status {
+            self.auto_exc.next_exc_ins.clone()
+        } else {
+            self.auto_exc.next_exc_cmd.clone()
+        } {
+            match input {
+                GenericCmd::Character(v) => v,
+                GenericCmd::Number(v) => v.to_string(),
+            }
+        } else {
+            return Err(DataError::Redaction("error".to_string()))
+        };
+        let _ = self.file_poll();
 
         // input parser and check
         input = self.input_parser(input);
@@ -205,6 +217,8 @@ impl Console {
             .push_str(&format!("{} > ", input.clone()));
         // self.check.read_valid = true;
 
+        self.log(&input);
+
         Ok(input)
     }
 
@@ -212,7 +226,6 @@ impl Console {
         self.auto_exc.file_address = Some(self.read("请输入文件地址")?);
 
         self.check.read_valid = true;
-        self.check.file_valid = true;
         let context = std::fs::read_to_string(&self.auto_exc.file_address.clone().unwrap())?;
         // self.auto_exc = toml::from_str::<ExcuteFile>(&context).map_err(|_| DataError::Unknown)?;
         self.auto_exc = match toml::from_str::<ExcuteFile>(&context) {
@@ -224,8 +237,12 @@ impl Console {
         };
 
         self.check.import_valid = true;
+        self.check.file_valid = true;
         println!("{:#?}", self.auto_exc);
+        self.refresh()?;
 
+        // pre-population.
+        let _ = self.file_poll();
         self.refresh()?;
 
         Ok(())
