@@ -1,9 +1,11 @@
+use rfcaf::GenericCmd;
+
 /*
  * @Author: liujiajin
  * @Date: 2024-08-17 10:58:54
  * @LastEditors: Please set LastEditors
- * @LastEditTime: 2024-08-19 17:39:49
- * @Description: 
+ * @LastEditTime: 2024-08-20 16:35:07
+ * @Description:
  */
 extern crate rfcaf;
 
@@ -13,13 +15,18 @@ fn main() {
     // if let Err(err_info) = test.file_import("example.toml") {
     //     println!("{:?}", err_info);
     // }
-    test.refresh();
-    
+    test.setup();
+
     loop {
-
-        test.read("输入一条命令");
-
+        if let Ok(cmd) = test.read("输入一条命令") {
+            match cmd.as_str() {
+                "R" | "r" => {
+                    if let Err(err_info) = test.file_import() {
+                        test.err_log(err_info);
+                    }
+                }
+                _ => {}
+            };
+        }
     }
-
-    println!("hello world!");
 }

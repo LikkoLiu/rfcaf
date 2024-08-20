@@ -12,3 +12,12 @@ sub_cmd = "y"
 [[exc_ins_assets.sub_cmd_assets]]
 sub_cmd = "xx+-|x"
 
+# 单次测试 指令/命令 集
+[[exc_ins_assets]]
+exc_ins = 5
+
+# 使能/失能
+[[exc_ins_assets.sub_cmd_assets]]
+sub_cmd = "y"
+
+
