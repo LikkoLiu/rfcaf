@@ -1,20 +1,14 @@
-use rfcaf::GenericCmd;
-
 /*
  * @Author: liujiajin
  * @Date: 2024-08-17 10:58:54
  * @LastEditors: Please set LastEditors
- * @LastEditTime: 2024-08-20 16:35:07
+ * @LastEditTime: 2024-08-20 17:16:46
  * @Description:
  */
 extern crate rfcaf;
 
 fn main() {
     let mut test = rfcaf::Console::new();
-    println!("{:?}", test);
-    // if let Err(err_info) = test.file_import("example.toml") {
-    //     println!("{:?}", err_info);
-    // }
     test.setup();
 
     loop {

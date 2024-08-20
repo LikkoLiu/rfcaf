@@ -2,7 +2,7 @@
  * @Author: likkoliu
  * @Date: 2024-08-17 10:48:48
  * @LastEditors: Please set LastEditors
- * @LastEditTime: 2024-08-20 17:13:02
+ * @LastEditTime: 2024-08-20 17:39:24
  * @Description:
  */
 use serde_derive::Deserialize;
@@ -188,17 +188,18 @@ impl Console {
 
     /// Get instructions from the file
     pub fn file_read(&mut self, _prompt: &str) -> Result<String, DataError> {
-        let mut input = if let Some((_, input)) = if let ConsoleStatus::InsAcqFromFile = self.current_status {
-            self.auto_exc.next_exc_ins.clone()
-        } else {
-            self.auto_exc.next_exc_cmd.clone()
-        } {
+        let mut input = if let Some((_, input)) =
+            if let ConsoleStatus::InsAcqFromFile = self.current_status {
+                self.auto_exc.next_exc_ins.clone()
+            } else {
+                self.auto_exc.next_exc_cmd.clone()
+            } {
             match input {
                 GenericCmd::Character(v) => v,
                 GenericCmd::Number(v) => v.to_string(),
             }
         } else {
-            return Err(DataError::Redaction("error".to_string()))
+            return Err(DataError::Redaction("error".to_string()));
         };
         let _ = self.file_poll();
 
@@ -292,6 +293,28 @@ impl Console {
                                 } else {
                                     // End of file instruction set traversal.
                                     self.auto_exc.next_exc_ins = None;
+
+                                    // cycle judgment
+                                    if match self.auto_exc.cycle_times {
+                                        Some(cycle_times) => {
+                                            self.auto_exc.cycle_times = Some(cycle_times - 1);
+                                            cycle_times - 1
+                                        }
+                                        None => 0,
+                                    } != 0
+                                    {
+                                        if let Some(exc_assets) =
+                                            self.auto_exc.exc_ins_assets.get(0)
+                                        {
+                                            if let Some(ins) = &exc_assets.exc_ins {
+                                                self.auto_exc.next_exc_ins = Some((0, ins.clone()));
+                                            } else {
+                                                // No instruction error under instruction set
+                                            }
+                                        } else {
+                                            // No instruction set error
+                                        }
+                                    }
                                 }
                             }
                         } else {
@@ -326,12 +349,34 @@ impl Console {
                                     // End of file instruction set traversal.
                                     self.auto_exc.next_exc_ins = None;
                                     self.auto_exc.next_exc_cmd = None;
+
+                                    // cycle judgment
+                                    if match self.auto_exc.cycle_times {
+                                        Some(cycle_times) => {
+                                            self.auto_exc.cycle_times = Some(cycle_times - 1);
+                                            cycle_times - 1
+                                        }
+                                        None => 0,
+                                    } != 0
+                                    {
+                                        if let Some(exc_assets) =
+                                            self.auto_exc.exc_ins_assets.get(0)
+                                        {
+                                            if let Some(ins) = &exc_assets.exc_ins {
+                                                self.auto_exc.next_exc_ins = Some((0, ins.clone()));
+                                            } else {
+                                                // No instruction error under instruction set
+                                            }
+                                        } else {
+                                            // No instruction set error
+                                        }
+                                    }
                                 }
                             }
                         } else {
                             self.auto_exc.next_exc_ins = None;
                             self.auto_exc.next_exc_cmd = None;
-                            // Error.
+                            // Loss error.
                         }
                     }
                 }

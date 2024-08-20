@@ -1,4 +1,4 @@
-cycle_times = 1
+cycle_times = 3
 
 # 单次测试 指令/命令 集
 [[exc_ins_assets]]
