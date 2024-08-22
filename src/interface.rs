@@ -15,4 +15,8 @@ pub trait ConsoleLog {
     {
         println!("{:?}", err_info);
     }
+
+    fn err_invalid(&self) -> &'static str {
+        "invalid input."
+    }
 }

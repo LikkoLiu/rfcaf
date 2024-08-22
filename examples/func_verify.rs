@@ -16,7 +16,9 @@ impl log {
 }
 
 impl ConsoleLog for log {
-
+    fn err_invalid(&self) -> &'static str {
+        self.err_info
+    }
 }
 
 fn main() {

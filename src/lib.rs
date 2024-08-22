@@ -103,6 +103,7 @@ where
     auto_exc: ExecuteFile,
 
     log: Arc<Mutex<T>>,
+    pub _input_invalid: &'static str,
 }
 
 impl<T> Console<T>
@@ -110,6 +111,16 @@ where
     T: ConsoleLog,
 {
     pub fn new(log: Arc<Mutex<T>>) -> Self {
+        let invalid_info = match log
+            .lock()
+            .map_err(|_| DataError::Redaction("log information prints mutex acquisition failure.".to_string()))
+        {
+            Ok(log) => log.err_invalid(),
+            Err(_err_info) => {
+                panic!("{}", _err_info);
+            }
+        };
+
         Console {
             status: Status {
                 current: ConsoleStatus::Invaild,
@@ -137,6 +148,7 @@ where
             },
 
             log: log,
+            _input_invalid: invalid_info,
         }
     }
 
