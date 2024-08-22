@@ -5,13 +5,13 @@
  * @LastEditTime: 2024-08-21 15:50:56
  * @Description:
  */
+pub mod interface;
+use crate::interface::ConsoleLog;
 use serde_derive::Deserialize;
-use std::fmt;
 use std::io::{self, Write};
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use toml;
-
-const ERR_VALID_INPUT: &'static str = "无效的输入";
 
 #[derive(Error, Debug)]
 pub enum DataError {
@@ -89,7 +89,10 @@ struct Status {
 }
 
 #[derive(Debug)]
-pub struct Console {
+pub struct Console<T>
+where
+    T: ConsoleLog,
+{
     status: Status,
     check: ValidCheck,
     interact: ConsolePrompt,
@@ -98,10 +101,15 @@ pub struct Console {
     current_cmd: Option<String>, // Currently executing command
 
     auto_exc: ExecuteFile,
+
+    log: Arc<Mutex<T>>,
 }
 
-impl Console {
-    pub fn new() -> Self {
+impl<T> Console<T>
+where
+    T: ConsoleLog,
+{
+    pub fn new(log: Arc<Mutex<T>>) -> Self {
         Console {
             status: Status {
                 current: ConsoleStatus::Invaild,
@@ -127,6 +135,8 @@ impl Console {
                 next_exc_ins: None,
                 next_exc_cmd: None,
             },
+
+            log: log,
         }
     }
 
@@ -228,7 +238,17 @@ impl Console {
             .push_str(&format!("{} > ", input.clone()));
         // self.check.read_valid = true;
 
-        self.log(&input);
+        // automatic file command execution output.
+        match self
+            .log
+            .lock()
+            .map_err(|_| DataError::Redaction("log information prints mutex acquisition failure.".to_string()))
+        {
+            Ok(log) => log.file_exc_log(&input),
+            Err(_err_info) => {
+                panic!("{}", _err_info);
+            }
+        }
 
         Ok(input)
     }
@@ -409,10 +429,19 @@ impl Console {
 
     pub fn read(&mut self, prompt: &str) -> Result<String, DataError> {
         // print prompt.
-        self.log(&format!(
-            "{}{}{}",
-            self.interact.mian_prompt, self.interact.sub_prompt, prompt
-        ));
+        match self
+            .log
+            .lock()
+            .map_err(|_| DataError::Redaction("log information prints mutex acquisition failure.".to_string()))
+        {
+            Ok(log) => log.prompt_log(&format!(
+                "{}{}{}",
+                self.interact.mian_prompt, self.interact.sub_prompt, prompt
+            )),
+            Err(_err_info) => {
+                panic!("{}", _err_info);
+            }
+        }
 
         // File read command and terminal read command split.
         let cmd = match self.status.current {
@@ -437,7 +466,6 @@ impl Console {
                 return Ok(cmd);
             }
             Err(err_info) => {
-                self.err_log(&err_info);
                 self.refresh()?;
                 return Err(err_info);
             }
@@ -448,9 +476,19 @@ impl Console {
         match self.read(prompt) {
             Ok(input) => input,
             Err(err_info) => {
-                self.err_log(err_info);
+                // If the log mutex acquisition fails, it will panic automatically.
+                match self
+                    .log
+                    .lock()
+                    .map_err(|_| DataError::Redaction("log information prints mutex acquisition failure.".to_string()))
+                {
+                    Ok(log) => log.err_log(&err_info),
+                    Err(_err_info) => {
+                        panic!("{}", _err_info);
+                    }
+                }
                 "".to_string()
-            },
+            }
         }
     }
 
@@ -534,20 +572,5 @@ impl Console {
         self.check.file_valid = false;
         self.check.import_valid = false;
         self.check.read_valid = false;
-    }
-
-    pub fn log(&self, log_info: &str) {
-        println!("{}", log_info);
-    }
-
-    pub fn err_log<T>(&self, err_info: T)
-    where
-        T: fmt::Display + fmt::Debug,
-    {
-        println!("{:?}", err_info);
-    }
-
-    pub fn input_warn(&self) -> &str {
-        ERR_VALID_INPUT
     }
 }

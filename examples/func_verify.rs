@@ -1,14 +1,27 @@
-/*
- * @Author: liujiajin
- * @Date: 2024-08-17 10:58:54
- * @LastEditors: Please set LastEditors
- * @LastEditTime: 2024-08-21 14:33:47
- * @Description:
- */
+use std::sync::{Arc, Mutex};
+
+use rfcaf::interface::ConsoleLog;
+const ERR_VALID_INPUT: &'static str = "无效的输入";
 extern crate rfcaf;
+struct log {
+    err_info: &'static str,
+}
+
+impl log {
+    pub fn new() -> Self {
+        log {
+            err_info: ERR_VALID_INPUT,
+        }
+    }
+}
+
+impl ConsoleLog for log {
+
+}
 
 fn main() {
-    let mut test = rfcaf::Console::new();
+    let log = log::new();
+    let mut test = rfcaf::Console::new(Arc::new(Mutex::new(log)));
     test.setup();
 
     loop {
@@ -16,7 +29,6 @@ fn main() {
             match cmd.as_str() {
                 "R" | "r" => {
                     if let Err(err_info) = test.file_import() {
-                        test.err_log(err_info);
                     }
                 }
                 _ => {}
