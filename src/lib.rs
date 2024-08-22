@@ -111,10 +111,9 @@ where
     T: ConsoleLog,
 {
     pub fn new(log: Arc<Mutex<T>>) -> Self {
-        let invalid_info = match log
-            .lock()
-            .map_err(|_| DataError::Redaction("log information prints mutex acquisition failure.".to_string()))
-        {
+        let invalid_info = match log.lock().map_err(|_| {
+            DataError::Redaction("log information prints mutex acquisition failure.".to_string())
+        }) {
             Ok(log) => log.err_invalid(),
             Err(_err_info) => {
                 panic!("{}", _err_info);
@@ -211,7 +210,7 @@ where
             self.current_cmd = Some(input.clone());
         }
         self.interact
-            .mian_prompt
+            .sub_prompt
             .push_str(&format!("{} > ", input.clone()));
         // self.check.read_valid = true;
 
@@ -251,11 +250,9 @@ where
         // self.check.read_valid = true;
 
         // automatic file command execution output.
-        match self
-            .log
-            .lock()
-            .map_err(|_| DataError::Redaction("log information prints mutex acquisition failure.".to_string()))
-        {
+        match self.log.lock().map_err(|_| {
+            DataError::Redaction("log information prints mutex acquisition failure.".to_string())
+        }) {
             Ok(log) => log.file_exc_log(&input),
             Err(_err_info) => {
                 panic!("{}", _err_info);
@@ -441,15 +438,22 @@ where
 
     pub fn read(&mut self, prompt: &str) -> Result<String, DataError> {
         // print prompt.
-        match self
-            .log
-            .lock()
-            .map_err(|_| DataError::Redaction("log information prints mutex acquisition failure.".to_string()))
-        {
-            Ok(log) => log.prompt_log(&format!(
-                "{}{}{}",
-                self.interact.mian_prompt, self.interact.sub_prompt, prompt
-            )),
+        match self.log.lock().map_err(|_| {
+            DataError::Redaction("log information prints mutex acquisition failure.".to_string())
+        }) {
+            Ok(log) => {
+                if prompt == "" {
+                    log.prompt_log(&format!(
+                        "{}{}",
+                        self.interact.mian_prompt, self.interact.sub_prompt
+                    ))
+                } else {
+                    log.prompt_log(&format!(
+                        "{}{}\r\n{}",
+                        self.interact.mian_prompt, self.interact.sub_prompt, prompt
+                    ))
+                }
+            }
             Err(_err_info) => {
                 panic!("{}", _err_info);
             }
@@ -489,11 +493,11 @@ where
             Ok(input) => input,
             Err(err_info) => {
                 // If the log mutex acquisition fails, it will panic automatically.
-                match self
-                    .log
-                    .lock()
-                    .map_err(|_| DataError::Redaction("log information prints mutex acquisition failure.".to_string()))
-                {
+                match self.log.lock().map_err(|_| {
+                    DataError::Redaction(
+                        "log information prints mutex acquisition failure.".to_string(),
+                    )
+                }) {
                     Ok(log) => log.err_log(&err_info),
                     Err(_err_info) => {
                         panic!("{}", _err_info);
@@ -564,8 +568,7 @@ where
                 "
     + - - - - - - - - - + - - - - - - - - - - - +
     |   控制台当前状态  |  {:?}  
-    + - - - - - - - - - + - - - - - - - - - - - +
-        ",
+    + - - - - - - - - - + - - - - - - - - - - - +",
                 self.status.current
             );
         }
