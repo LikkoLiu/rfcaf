@@ -2,7 +2,7 @@
  * @Author: likkoliu
  * @Date: 2024-08-17 10:48:48
  * @LastEditors: Please set LastEditors
- * @LastEditTime: 2024-08-20 17:39:24
+ * @LastEditTime: 2024-08-21 15:50:56
  * @Description:
  */
 use serde_derive::Deserialize;
@@ -11,14 +11,16 @@ use std::io::{self, Write};
 use thiserror::Error;
 use toml;
 
+const ERR_VALID_INPUT: &'static str = "无效的输入";
+
 #[derive(Error, Debug)]
 pub enum DataError {
     #[error("data loss")]
-    Loss(#[from] io::Error),
+    Loss(#[from] io::Error), // Convert other error types.
     #[error("{0}")]
     Redaction(String),
     #[error("invalid header (expected {expected:?}, found {found:?})")]
-    InvalidHeader { expected: String, found: String },
+    InvalidHeader { expected: String, found: String }, // prompt to expect input
     #[error("unknown data error")]
     Unknown,
 }
@@ -59,18 +61,18 @@ pub struct ConsolePrompt {
 
 /// Automation command execution file config
 #[derive(Deserialize, Debug)]
-pub struct ExcuteFile {
+pub struct ExecuteFile {
     file_address: Option<String>, // Automatic execution command file address
 
-    exc_ins_assets: Vec<ExcuteAssets>, // Automatically execute instructions and command assets
-    cycle_times: Option<usize>,        // Automatic execution cycle times
+    exc_ins_assets: Vec<ExecuteAssets>, // Automatically execute instructions and command assets
+    cycle_times: Option<usize>,         // Automatic execution cycle times
 
     next_exc_ins: Option<(usize, GenericCmd)>, // Next automatic execution instruction
     next_exc_cmd: Option<(usize, GenericCmd)>, // Next auto-execute command
 }
 
 #[derive(Deserialize, Debug)]
-struct ExcuteAssets {
+struct ExecuteAssets {
     exc_ins: Option<GenericCmd>, // Automatic execution instruction
     sub_cmd_assets: Vec<SubCmd>, // Auto-execute command assets
 }
@@ -81,29 +83,36 @@ struct SubCmd {
 }
 
 #[derive(Debug)]
+struct Status {
+    current: ConsoleStatus,
+    previous: ConsoleStatus,
+}
+
+#[derive(Debug)]
 pub struct Console {
-    current_status: ConsoleStatus,
-    previous_status: ConsoleStatus,
+    status: Status,
     check: ValidCheck,
-    interact_prompt: ConsolePrompt,
+    interact: ConsolePrompt,
 
     current_ins: Option<String>, // Currently executing instruction
     current_cmd: Option<String>, // Currently executing command
 
-    auto_exc: ExcuteFile,
+    auto_exc: ExecuteFile,
 }
 
 impl Console {
     pub fn new() -> Self {
         Console {
-            current_status: ConsoleStatus::Invaild,
-            previous_status: ConsoleStatus::Invaild,
+            status: Status {
+                current: ConsoleStatus::Invaild,
+                previous: ConsoleStatus::Invaild,
+            },
             check: ValidCheck {
                 read_valid: false,
                 import_valid: false,
                 file_valid: false,
             },
-            interact_prompt: ConsolePrompt {
+            interact: ConsolePrompt {
                 mian_prompt: String::from("> "),
                 sub_prompt: String::from(""),
             },
@@ -111,7 +120,7 @@ impl Console {
             current_ins: None,
             current_cmd: None,
 
-            auto_exc: ExcuteFile {
+            auto_exc: ExecuteFile {
                 file_address: None,
                 exc_ins_assets: Vec::new(),
                 cycle_times: None,
@@ -121,6 +130,7 @@ impl Console {
         }
     }
 
+    /// Initialize after creating the console object to refresh the state machine.
     pub fn setup(&mut self) {
         let _ = self.refresh();
     }
@@ -136,7 +146,7 @@ impl Console {
     }
 
     /// Terminal input character check
-    fn input_check(&mut self, input: String) -> Result<String, DataError> {
+    fn input_check(&mut self, input: &str) -> Result<(), DataError> {
         if !input.chars().all(|c| {
             c.is_alphanumeric()
                 || c == '.'
@@ -149,11 +159,11 @@ impl Console {
         {
             Err(DataError::InvalidHeader {
                 expected: ("specified command characters".to_string()),
-                found: ("invalid character".to_string()),
+                found: ("invalid characters".to_string()),
             })
         } else {
             self.check.read_valid = true;
-            Ok(input)
+            Ok(())
         }
     }
 
@@ -170,15 +180,15 @@ impl Console {
 
         // input parser and check
         input = self.input_parser(input);
-        input = self.input_check(input)?;
+        self.input_check(&input)?;
 
         // input valid and apply it
-        if let ConsoleStatus::InsAcqFromTerminal = self.current_status {
+        if let ConsoleStatus::InsAcqFromTerminal = self.status.current {
             self.current_ins = Some(input.clone());
         } else {
             self.current_cmd = Some(input.clone());
         }
-        self.interact_prompt
+        self.interact
             .mian_prompt
             .push_str(&format!("{} > ", input.clone()));
         // self.check.read_valid = true;
@@ -189,7 +199,7 @@ impl Console {
     /// Get instructions from the file
     pub fn file_read(&mut self, _prompt: &str) -> Result<String, DataError> {
         let mut input = if let Some((_, input)) =
-            if let ConsoleStatus::InsAcqFromFile = self.current_status {
+            if let ConsoleStatus::InsAcqFromFile = self.status.current {
                 self.auto_exc.next_exc_ins.clone()
             } else {
                 self.auto_exc.next_exc_cmd.clone()
@@ -205,15 +215,15 @@ impl Console {
 
         // input parser and check
         input = self.input_parser(input);
-        input = self.input_check(input)?;
+        self.input_check(&input)?;
 
         // input valid and apply it
-        if let ConsoleStatus::InsAcqFromTerminal = self.current_status {
+        if let ConsoleStatus::InsAcqFromTerminal = self.status.current {
             self.current_ins = Some(input.clone());
         } else {
             self.current_cmd = Some(input.clone());
         }
-        self.interact_prompt
+        self.interact
             .mian_prompt
             .push_str(&format!("{} > ", input.clone()));
         // self.check.read_valid = true;
@@ -225,22 +235,19 @@ impl Console {
 
     pub fn file_import(&mut self) -> Result<(), DataError> {
         self.auto_exc.file_address = Some(self.read("请输入文件地址")?);
-
         self.check.read_valid = true;
+
         let context = std::fs::read_to_string(&self.auto_exc.file_address.clone().unwrap())?;
-        // self.auto_exc = toml::from_str::<ExcuteFile>(&context).map_err(|_| DataError::Unknown)?;
-        self.auto_exc = match toml::from_str::<ExcuteFile>(&context) {
+        self.check.file_valid = true;
+
+        self.auto_exc = match toml::from_str::<ExecuteFile>(&context) {
             Ok(v) => v,
             Err(_err_info) => {
-                // println!("{:#?}", _err_info);
                 return Err(DataError::Redaction("文件内容格式有误".to_string()));
             }
         };
-
         self.check.import_valid = true;
-        self.check.file_valid = true;
         println!("{:#?}", self.auto_exc);
-        self.refresh()?;
 
         // pre-population.
         let _ = self.file_poll();
@@ -404,11 +411,11 @@ impl Console {
         // print prompt.
         self.log(&format!(
             "{}{}{}",
-            self.interact_prompt.mian_prompt, self.interact_prompt.sub_prompt, prompt
+            self.interact.mian_prompt, self.interact.sub_prompt, prompt
         ));
 
         // File read command and terminal read command split.
-        let cmd = match self.current_status {
+        let cmd = match self.status.current {
             ConsoleStatus::InsAcqFromTerminal | ConsoleStatus::InsExecFromTerminal => {
                 self.terminal_read(prompt)
             }
@@ -437,10 +444,20 @@ impl Console {
         }
     }
 
+    pub fn read_no_err(&mut self, prompt: &str) -> String {
+        match self.read(prompt) {
+            Ok(input) => input,
+            Err(err_info) => {
+                self.err_log(err_info);
+                "".to_string()
+            },
+        }
+    }
+
     /// Console state machine refresh
     pub fn refresh(&mut self) -> Result<(), DataError> {
-        self.previous_status = self.current_status.clone();
-        self.current_status = match self.current_status {
+        self.status.previous = self.status.current.clone();
+        self.status.current = match self.status.current {
             ConsoleStatus::Invaild => ConsoleStatus::InsAcqFromTerminal,
             ConsoleStatus::InsAcqFromFile => {
                 if let Some(_) = self.auto_exc.next_exc_cmd {
@@ -472,8 +489,12 @@ impl Console {
             ConsoleStatus::InsExecFromTerminal => match self.check.read_valid {
                 true => {
                     if self.check.file_valid && self.check.import_valid {
-                        self.prompt_clear();
-                        ConsoleStatus::InsAcqFromFile
+                        if let Some(_) = self.auto_exc.next_exc_ins {
+                            self.prompt_clear();
+                            ConsoleStatus::InsAcqFromFile
+                        } else {
+                            ConsoleStatus::Invaild
+                        }
                     } else {
                         ConsoleStatus::InsExecFromTerminal
                     }
@@ -482,20 +503,20 @@ impl Console {
             },
         };
 
-        if let ConsoleStatus::Invaild = self.current_status {
+        if let ConsoleStatus::Invaild = self.status.current {
             self.prompt_clear();
-            self.previous_status = self.current_status.clone();
-            self.current_status = ConsoleStatus::InsAcqFromTerminal;
+            self.status.previous = self.status.current.clone();
+            self.status.current = ConsoleStatus::InsAcqFromTerminal;
         }
 
-        if self.current_status != self.previous_status {
+        if self.status.current != self.status.previous {
             println!(
                 "
     + - - - - - - - - - + - - - - - - - - - - - +
     |   控制台当前状态  |  {:?}  
     + - - - - - - - - - + - - - - - - - - - - - +
         ",
-                self.current_status
+                self.status.current
             );
         }
 
@@ -505,8 +526,8 @@ impl Console {
 
     /// Clear the console command cache
     pub fn prompt_clear(&mut self) {
-        self.interact_prompt.mian_prompt = String::from("> ");
-        self.interact_prompt.sub_prompt = String::from("");
+        self.interact.mian_prompt = String::from("> ");
+        self.interact.sub_prompt = String::from("");
     }
 
     pub fn check_reset(&mut self) {
@@ -524,5 +545,9 @@ impl Console {
         T: fmt::Display + fmt::Debug,
     {
         println!("{:?}", err_info);
+    }
+
+    pub fn input_warn(&self) -> &str {
+        ERR_VALID_INPUT
     }
 }
