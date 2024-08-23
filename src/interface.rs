@@ -9,6 +9,8 @@ pub trait ConsoleLog {
         println!("{}", log_info);
     }
 
+    fn terminal_exc_log(&self, _log_info: &str) {}
+
     fn err_log<T>(&self, err_info: T)
     where
         T: fmt::Display + fmt::Debug,

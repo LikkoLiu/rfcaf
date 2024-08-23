@@ -15,66 +15,66 @@ use toml;
 
 #[derive(Error, Debug)]
 pub enum DataError {
-    #[error("data loss")]
-    Loss(#[from] io::Error), // Convert other error types.
+    #[error("data error")]
+    Other(#[from] io::Error), // Convert other error types.
     #[error("{0}")]
-    Redaction(String),
+    Redaction(String), // error action.
     #[error("invalid header (expected {expected:?}, found {found:?})")]
-    InvalidHeader { expected: String, found: String }, // prompt to expect input
+    InvalidHeader { expected: String, found: String }, // dismatch expect input.
     #[error("unknown data error")]
     Unknown,
 }
 
-/// Supported command data types
+/// Supported file-command data types.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
-pub enum GenericCmd {
+enum GenericCmd {
     Number(usize),
     Character(String),
 }
 
-/// Console Status
+/// Console Status.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ConsoleStatus {
-    InsAcqFromFile,     // Instruction acquisition status
-    InsAcqFromTerminal, // Instruction acquisition status
+enum ConsoleStatus {
+    InsAcqFromFile,     // instruction acquisition from file status.
+    InsAcqFromTerminal, // instruction acquisition from terminal status.
 
-    InsExecFromFile,     // Instruction execution status
-    InsExecFromTerminal, // Instruction execution status
+    InsExecFromFile,     // instruction execution from file status.
+    InsExecFromTerminal, // instruction execution from terminal status.
 
-    Invaild, // Invaild state
+    Invaild, // invaild state.
 }
 
 #[derive(Deserialize, Debug)]
-pub struct ValidCheck {
-    read_valid: bool,   // Command read valid
-    import_valid: bool, // Import file is valid
-    file_valid: bool,   // The file address has been obtained
+struct ValidCheck {
+    read_valid: bool,   // Command read valid.
+    import_valid: bool, // Import file is valid.
+    file_valid: bool,   // The file address has been obtained.
 }
 
-/// Command line echo prompt
+/// Command line echo prompt.
 #[derive(Debug)]
-pub struct ConsolePrompt {
+struct ConsolePrompt {
     mian_prompt: String,
     sub_prompt: String,
 }
 
-/// Automation command execution file config
+/// Automation command execution file config.
 #[derive(Deserialize, Debug)]
-pub struct ExecuteFile {
-    file_address: Option<String>, // Automatic execution command file address
+struct ExecuteFile {
+    file_address: Option<String>, // <populated by file_import> automatic execution command file address.
 
-    exc_ins_assets: Vec<ExecuteAssets>, // Automatically execute instructions and command assets
-    cycle_times: Option<usize>,         // Automatic execution cycle times
+    exc_ins_assets: Vec<ExecuteAssets>, // <collections> automatically execute instructions and command assets.
+    cycle_times: Option<usize>, // <option, default one time> automatic execution cycle times.
 
-    next_exc_ins: Option<(usize, GenericCmd)>, // Next automatic execution instruction
-    next_exc_cmd: Option<(usize, GenericCmd)>, // Next auto-execute command
+    next_exc_ins: Option<(usize, GenericCmd)>, // <populated by file_poll> next automatic execution instruction.
+    next_exc_cmd: Option<(usize, GenericCmd)>, // <populated by file_poll> next auto-execute command.
 }
 
 #[derive(Deserialize, Debug)]
 struct ExecuteAssets {
-    exc_ins: Option<GenericCmd>, // Automatic execution instruction
-    sub_cmd_assets: Vec<SubCmd>, // Auto-execute command assets
+    exc_ins: GenericCmd, // <required> Automatic execution instruction.
+    sub_cmd_assets: Option<Vec<SubCmd>>, // <option> Auto-execute command assets.
 }
 
 #[derive(Deserialize, Debug)]
@@ -95,15 +95,15 @@ where
 {
     status: Status,
     check: ValidCheck,
-    interact: ConsolePrompt,
 
-    current_ins: Option<String>, // Currently executing instruction
-    current_cmd: Option<String>, // Currently executing command
+    interact: ConsolePrompt,
+    log: Arc<Mutex<T>>,
+    pub _input_invalid: &'static str,
 
     auto_exc: ExecuteFile,
 
-    log: Arc<Mutex<T>>,
-    pub _input_invalid: &'static str,
+    current_ins: Option<String>, // currently executing instruction.
+    current_cmd: Option<String>, // currently executing command.
 }
 
 impl<T> Console<T>
@@ -130,13 +130,13 @@ where
                 import_valid: false,
                 file_valid: false,
             },
+
             interact: ConsolePrompt {
                 mian_prompt: String::from("> "),
                 sub_prompt: String::from(""),
             },
-
-            current_ins: None,
-            current_cmd: None,
+            log: log,
+            _input_invalid: invalid_info,
 
             auto_exc: ExecuteFile {
                 file_address: None,
@@ -146,28 +146,29 @@ where
                 next_exc_cmd: None,
             },
 
-            log: log,
-            _input_invalid: invalid_info,
+            current_ins: None,
+            current_cmd: None,
         }
     }
 
-    /// Initialize after creating the console object to refresh the state machine.
+    /// initialize after creating the console object to refresh the state machine.
     pub fn setup(&mut self) {
         let _ = self.refresh();
     }
 
+    /// called when a set of instructions has completed execution.
     pub fn taildowm(&mut self) {
         let _ = self.refresh();
     }
 
-    /// Terminal input character parser
+    /// input character parser.
     fn input_parser(&self, input: String) -> String {
         let x: &[_] = &['\r', '\n'];
         return String::from(input.trim_end_matches(x));
     }
 
-    /// Terminal input character check
-    fn input_check(&mut self, input: &str) -> Result<(), DataError> {
+    /// input character check.
+    fn input_check(&mut self, input: &str) -> Result<bool, DataError> {
         if !input.chars().all(|c| {
             c.is_alphanumeric()
                 || c == '.'
@@ -183,13 +184,12 @@ where
                 found: ("invalid characters".to_string()),
             })
         } else {
-            self.check.read_valid = true;
-            Ok(())
+            Ok(true)
         }
     }
 
-    /// Get instructions from the terminal
-    pub fn terminal_read(&mut self, _prompt: &str) -> Result<String, DataError> {
+    /// get instructions from the terminal.
+    fn terminal_read(&mut self, _prompt: &str) -> Result<String, DataError> {
         let _ = io::stdout().flush();
         let mut input = String::new();
         io::stdin()
@@ -199,11 +199,11 @@ where
                 found: ("invalid input".to_string()),
             })?;
 
-        // input parser and check
+        // input parser and check.
         input = self.input_parser(input);
-        self.input_check(&input)?;
+        self.check.read_valid = self.input_check(&input)?;
 
-        // input valid and apply it
+        // input valid and apply it.
         if let ConsoleStatus::InsAcqFromTerminal = self.status.current {
             self.current_ins = Some(input.clone());
         } else {
@@ -212,13 +212,22 @@ where
         self.interact
             .sub_prompt
             .push_str(&format!("{} > ", input.clone()));
-        // self.check.read_valid = true;
+
+        // terminal command execution output.
+        match self.log.lock().map_err(|_| {
+            DataError::Redaction("log information prints mutex acquisition failure.".to_string())
+        }) {
+            Ok(log) => log.terminal_exc_log(&input),
+            Err(_err_info) => {
+                panic!("{}", _err_info);
+            }
+        }
 
         Ok(input)
     }
 
-    /// Get instructions from the file
-    pub fn file_read(&mut self, _prompt: &str) -> Result<String, DataError> {
+    /// Get instructions from the file.
+    fn file_read(&mut self, _prompt: &str) -> Result<String, DataError> {
         let mut input = if let Some((_, input)) =
             if let ConsoleStatus::InsAcqFromFile = self.status.current {
                 self.auto_exc.next_exc_ins.clone()
@@ -230,15 +239,17 @@ where
                 GenericCmd::Number(v) => v.to_string(),
             }
         } else {
-            return Err(DataError::Redaction("error".to_string()));
+            return Err(DataError::Redaction(
+                "no executable instructions or commands.".to_string(),
+            ));
         };
         let _ = self.file_poll();
 
-        // input parser and check
+        // input parser and check.
         input = self.input_parser(input);
-        self.input_check(&input)?;
+        self.check.read_valid = self.input_check(&input)?;
 
-        // input valid and apply it
+        // input valid and apply it.
         if let ConsoleStatus::InsAcqFromTerminal = self.status.current {
             self.current_ins = Some(input.clone());
         } else {
@@ -247,7 +258,6 @@ where
         self.interact
             .mian_prompt
             .push_str(&format!("{} > ", input.clone()));
-        // self.check.read_valid = true;
 
         // automatic file command execution output.
         match self.log.lock().map_err(|_| {
@@ -263,69 +273,92 @@ where
     }
 
     pub fn file_import(&mut self) -> Result<(), DataError> {
+        // clear the saved command set.
+        Console::exc_clear(self);
+
         self.auto_exc.file_address = Some(self.read("请输入文件地址")?);
-        self.check.read_valid = true;
-
-        let context = std::fs::read_to_string(&self.auto_exc.file_address.clone().unwrap())?;
+        self.check.read_valid = true; // nead re-set in file_import.
         self.check.file_valid = true;
-
+        let context = std::fs::read_to_string(&self.auto_exc.file_address.clone().unwrap())?;
         self.auto_exc = match toml::from_str::<ExecuteFile>(&context) {
             Ok(v) => v,
             Err(_err_info) => {
-                return Err(DataError::Redaction("文件内容格式有误".to_string()));
+                return Err(DataError::Redaction(format!(
+                    "{} {}  {}  {}",
+                    "文件内容格式有误，检查文件内容是否满足：",
+                    "- 文件涉及测试组 执行次数 <可选，若未输入默认执行一次>",
+                    "- 单次测试 主指令 <必须>",
+                    "- 单次测试 子命令/子命令集 <可选>"
+                )));
             }
         };
-        self.check.import_valid = true;
-        println!("{:#?}", self.auto_exc);
 
         // pre-population.
-        let _ = self.file_poll();
-        self.refresh()?;
+        self.file_poll()?;
+        self.check.import_valid = true;
+        // println!("{:#?}", self.auto_exc);
 
+        self.refresh()?;
         Ok(())
     }
 
-    pub fn file_poll(&mut self) -> Result<String, DataError> {
-        match self.auto_exc.next_exc_ins {
-            None => {
-                match self.auto_exc.next_exc_cmd {
-                    None => {
-                        if let Some(exc_assets) = self.auto_exc.exc_ins_assets.get(0) {
-                            if let Some(ins) = &exc_assets.exc_ins {
-                                self.auto_exc.next_exc_ins = Some((0, ins.clone()));
-                            } else {
-                                // No instruction error under instruction set
-                            }
-                        } else {
-                            // No instruction set error
-                        }
-                    }
-                    Some((_cmd_index, _)) => {
-                        // Err
+    pub fn file_import_no_err(&mut self) {
+        match self.file_import() {
+            Ok(_) => {}
+            Err(err_info) => {
+                // if the log mutex acquisition fails, it will panic automatically.
+                match self.log.lock().map_err(|_| {
+                    DataError::Redaction(
+                        "log information prints mutex acquisition failure.".to_string(),
+                    )
+                }) {
+                    Ok(log) => log.err_log(&err_info),
+                    Err(_err_info) => {
+                        panic!("{}", _err_info);
                     }
                 }
             }
+        }
+    }
+
+    fn file_poll(&mut self) -> Result<String, DataError> {
+        match self.auto_exc.next_exc_ins {
+            None => match self.auto_exc.next_exc_cmd {
+                None => {
+                    if let Some(exc_assets) = self.auto_exc.exc_ins_assets.get(0) {
+                        self.auto_exc.next_exc_ins = Some((0, exc_assets.exc_ins.clone()));
+                    } else {
+                        Console::exc_clear(self);
+                        return Err(DataError::Redaction(format!(
+                            "获取第一条主指令集失败，文件导入的指令集内容被污染，请重新导入文件。"
+                        )));
+                    }
+                }
+                Some((_cmd_index, _)) => {
+                    Console::exc_clear(self);
+                    return Err(DataError::Redaction(format!(
+                        "子命令的主指令意外丢失，请重新导入文件开始测试。"
+                    )));
+                }
+            },
             Some((ins_index, _)) => {
                 match self.auto_exc.next_exc_cmd {
                     None => {
                         // Go to the instruction set pointed to by the index.
                         if let Some(exc_assets) = self.auto_exc.exc_ins_assets.get(ins_index) {
-                            if let Some(cmd) = exc_assets.sub_cmd_assets.get(0) {
-                                // Get the first command in the instruction set
-                                self.auto_exc.next_exc_cmd = Some((0, cmd.sub_cmd.clone()));
+                            if let Some(sub_cmd_assets) = &exc_assets.sub_cmd_assets {
+                                if let Some(cmd) = sub_cmd_assets.get(0) {
+                                    // Get the first command in the instruction set
+                                    self.auto_exc.next_exc_cmd = Some((0, cmd.sub_cmd.clone()));
+                                }
                             } else {
                                 // No command in instruction set.
                                 // Get the next instruction set instruction.
                                 if let Some(exc_assets) =
                                     self.auto_exc.exc_ins_assets.get(ins_index + 1)
                                 {
-                                    if let Some(ins) = &exc_assets.exc_ins {
-                                        self.auto_exc.next_exc_ins =
-                                            Some((ins_index + 1, ins.clone()));
-                                    } else {
-                                        self.auto_exc.next_exc_ins = None;
-                                        // Err
-                                    }
+                                    self.auto_exc.next_exc_ins =
+                                        Some((ins_index + 1, exc_assets.exc_ins.clone()));
                                 } else {
                                     // End of file instruction set traversal.
                                     self.auto_exc.next_exc_ins = None;
@@ -342,77 +375,80 @@ where
                                         if let Some(exc_assets) =
                                             self.auto_exc.exc_ins_assets.get(0)
                                         {
-                                            if let Some(ins) = &exc_assets.exc_ins {
-                                                self.auto_exc.next_exc_ins = Some((0, ins.clone()));
-                                            } else {
-                                                // No instruction error under instruction set
-                                            }
+                                            self.auto_exc.next_exc_ins =
+                                                Some((0, exc_assets.exc_ins.clone()));
                                         } else {
-                                            // No instruction set error
+                                            Console::exc_clear(self);
+                                            return Err(DataError::Redaction(format!(
+                                                "获取第一条主指令集失败，文件导入的指令集内容被污染，请重新导入文件。"
+                                            )));
                                         }
                                     }
                                 }
                             }
                         } else {
-                            self.auto_exc.next_exc_ins = None;
-                            // Loss error.
+                            Console::exc_clear(self);
+                            return Err(DataError::Redaction(format!(
+                                "读取指定主指令集失败，请重新导入文件开始测试。"
+                            )));
                         }
                     }
                     Some((cmd_index, _)) => {
                         // Go to the instruction set pointed to by the index.
                         if let Some(exc_assets) = self.auto_exc.exc_ins_assets.get(ins_index) {
-                            // Go to the command set pointed to by the index.
-                            if let Some(cmd) = exc_assets.sub_cmd_assets.get(cmd_index + 1) {
-                                // Get the next command in the instruction set
-                                self.auto_exc.next_exc_cmd =
-                                    Some((cmd_index + 1, cmd.sub_cmd.clone()));
-                            } else {
-                                // No command in instruction set.
-                                // Get the next instruction set instruction.
-                                if let Some(exc_assets) =
-                                    self.auto_exc.exc_ins_assets.get(ins_index + 1)
-                                {
-                                    if let Some(ins) = &exc_assets.exc_ins {
+                            if let Some(sub_cmd_assets) = &exc_assets.sub_cmd_assets {
+                                // Go to the command set pointed to by the index.
+                                if let Some(cmd) = sub_cmd_assets.get(cmd_index + 1) {
+                                    // Get the next command in the instruction set
+                                    self.auto_exc.next_exc_cmd =
+                                        Some((cmd_index + 1, cmd.sub_cmd.clone()));
+                                } else {
+                                    // No command in instruction set.
+                                    // Get the next instruction set instruction.
+                                    if let Some(exc_assets) =
+                                        self.auto_exc.exc_ins_assets.get(ins_index + 1)
+                                    {
                                         self.auto_exc.next_exc_ins =
-                                            Some((ins_index + 1, ins.clone()));
-                                        self.auto_exc.next_exc_cmd = None;
+                                            Some((ins_index + 1, exc_assets.exc_ins.clone()));
                                     } else {
+                                        // End of file instruction set traversal.
                                         self.auto_exc.next_exc_ins = None;
                                         self.auto_exc.next_exc_cmd = None;
-                                        // Err
-                                    }
-                                } else {
-                                    // End of file instruction set traversal.
-                                    self.auto_exc.next_exc_ins = None;
-                                    self.auto_exc.next_exc_cmd = None;
 
-                                    // cycle judgment
-                                    if match self.auto_exc.cycle_times {
-                                        Some(cycle_times) => {
-                                            self.auto_exc.cycle_times = Some(cycle_times - 1);
-                                            cycle_times - 1
-                                        }
-                                        None => 0,
-                                    } != 0
-                                    {
-                                        if let Some(exc_assets) =
-                                            self.auto_exc.exc_ins_assets.get(0)
-                                        {
-                                            if let Some(ins) = &exc_assets.exc_ins {
-                                                self.auto_exc.next_exc_ins = Some((0, ins.clone()));
-                                            } else {
-                                                // No instruction error under instruction set
+                                        // cycle judgment
+                                        if match self.auto_exc.cycle_times {
+                                            Some(cycle_times) => {
+                                                self.auto_exc.cycle_times = Some(cycle_times - 1);
+                                                cycle_times - 1
                                             }
-                                        } else {
-                                            // No instruction set error
+                                            None => 0,
+                                        } != 0
+                                        {
+                                            if let Some(exc_assets) =
+                                                self.auto_exc.exc_ins_assets.get(0)
+                                            {
+                                                self.auto_exc.next_exc_ins =
+                                                    Some((0, exc_assets.exc_ins.clone()));
+                                            } else {
+                                                Console::exc_clear(self);
+                                                return Err(DataError::Redaction(format!(
+                                                    "获取第一条主指令集失败，文件导入的指令集内容被污染，请重新导入文件。"
+                                                )));
+                                            }
                                         }
                                     }
                                 }
+                            } else {
+                                Console::exc_clear(self);
+                                return Err(DataError::Redaction(format!(
+                                    "指定主指令集的子命令集意外丢失，请重新导入文件开始测试。"
+                                )));
                             }
                         } else {
-                            self.auto_exc.next_exc_ins = None;
-                            self.auto_exc.next_exc_cmd = None;
-                            // Loss error.
+                            Console::exc_clear(self);
+                            return Err(DataError::Redaction(format!(
+                                "子命令的主指令意外丢失，请重新导入文件开始测试。"
+                            )));
                         }
                     }
                 }
@@ -509,7 +545,7 @@ where
     }
 
     /// Console state machine refresh
-    pub fn refresh(&mut self) -> Result<(), DataError> {
+    fn refresh(&mut self) -> Result<(), DataError> {
         self.status.previous = self.status.current.clone();
         self.status.current = match self.status.current {
             ConsoleStatus::Invaild => ConsoleStatus::InsAcqFromTerminal,
@@ -542,7 +578,7 @@ where
             }
             ConsoleStatus::InsExecFromTerminal => match self.check.read_valid {
                 true => {
-                    if self.check.file_valid && self.check.import_valid {
+                    if self.check.file_valid {
                         if let Some(_) = self.auto_exc.next_exc_ins {
                             self.prompt_clear();
                             ConsoleStatus::InsAcqFromFile
@@ -566,10 +602,10 @@ where
         if self.status.current != self.status.previous {
             println!(
                 "
-    + - - - - - - - - - + - - - - - - - - - - - +
-    |   控制台当前状态  |  {:?}  
-    + - - - - - - - - - + - - - - - - - - - - - +",
-                self.status.current
+    + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +
+    |   控制台当前状态  |  {:?} -> {:?}   
+    + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +",
+                self.status.previous, self.status.current
             );
         }
 
@@ -578,12 +614,20 @@ where
     }
 
     /// Clear the console command cache
-    pub fn prompt_clear(&mut self) {
+    fn prompt_clear(&mut self) {
         self.interact.mian_prompt = String::from("> ");
         self.interact.sub_prompt = String::from("");
     }
 
-    pub fn check_reset(&mut self) {
+    fn exc_clear(&mut self) {
+        self.auto_exc.file_address = None;
+        self.auto_exc.exc_ins_assets.clear();
+        self.auto_exc.cycle_times = None;
+        self.auto_exc.next_exc_cmd = None;
+        self.auto_exc.next_exc_ins = None;
+    }
+
+    fn check_reset(&mut self) {
         self.check.file_valid = false;
         self.check.import_valid = false;
         self.check.read_valid = false;
