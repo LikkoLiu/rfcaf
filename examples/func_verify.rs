@@ -3,26 +3,26 @@ use std::sync::{Arc, Mutex};
 use rfcaf::interface::ConsoleLog;
 const ERR_VALID_INPUT: &'static str = "无效的输入";
 extern crate rfcaf;
-struct log {
+struct Log {
     err_info: &'static str,
 }
 
-impl log {
+impl Log {
     pub fn new() -> Self {
-        log {
+        Log {
             err_info: ERR_VALID_INPUT,
         }
     }
 }
 
-impl ConsoleLog for log {
+impl ConsoleLog for Log {
     fn err_invalid(&self) -> &'static str {
         self.err_info
     }
 }
 
 fn main() {
-    let log = log::new();
+    let log = Log::new();
     let mut test = rfcaf::Console::new(Arc::new(Mutex::new(log)));
     test.setup();
 
@@ -30,8 +30,7 @@ fn main() {
         if let Ok(cmd) = test.read("输入一条命令") {
             match cmd.as_str() {
                 "R" | "r" => {
-                    if let Err(err_info) = test.file_import() {
-                    }
+                    test.file_import_no_err();
                 }
                 _ => {}
             };

@@ -158,7 +158,9 @@ where
 
     /// called when a set of instructions has completed execution.
     pub fn taildowm(&mut self) {
-        let _ = self.refresh();
+        if self.status.current != ConsoleStatus::InsAcqFromTerminal {
+            let _ = self.refresh();
+        }
     }
 
     /// input character parser.
@@ -408,6 +410,7 @@ where
                                     if let Some(exc_assets) =
                                         self.auto_exc.exc_ins_assets.get(ins_index + 1)
                                     {
+                                        self.auto_exc.next_exc_cmd = None;
                                         self.auto_exc.next_exc_ins =
                                             Some((ins_index + 1, exc_assets.exc_ins.clone()));
                                     } else {
@@ -542,6 +545,10 @@ where
                 "".to_string()
             }
         }
+    }
+
+    pub fn read_or_invalid(&self) -> Result<String, DataError> {
+        Ok("".to_string())
     }
 
     /// Console state machine refresh
