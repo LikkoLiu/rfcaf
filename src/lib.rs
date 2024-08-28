@@ -42,7 +42,7 @@ enum ConsoleStatus {
     InsExecFromFile,     // instruction execution from file status.
     InsExecFromTerminal, // instruction execution from terminal status.
 
-    Invaild, // invaild state.
+    Invalid, // invalid state.
 }
 
 #[derive(Deserialize, Debug)]
@@ -55,7 +55,7 @@ struct ValidCheck {
 /// Command line echo prompt.
 #[derive(Debug)]
 struct ConsolePrompt {
-    mian_prompt: String,
+    main_prompt: String,
     sub_prompt: String,
 }
 
@@ -66,6 +66,7 @@ struct ExecuteFile {
 
     exc_ins_assets: Vec<ExecuteAssets>, // <collections> automatically execute instructions and command assets.
     cycle_times: Option<usize>, // <option, default one time> automatic execution cycle times.
+    mac: Option<String>, 
 
     next_exc_ins: Option<(usize, GenericCmd)>, // <populated by file_poll> next automatic execution instruction.
     next_exc_cmd: Option<(usize, GenericCmd)>, // <populated by file_poll> next auto-execute command.
@@ -122,8 +123,8 @@ where
 
         Console {
             status: Status {
-                current: ConsoleStatus::Invaild,
-                previous: ConsoleStatus::Invaild,
+                current: ConsoleStatus::Invalid,
+                previous: ConsoleStatus::Invalid,
             },
             check: ValidCheck {
                 read_valid: false,
@@ -132,7 +133,7 @@ where
             },
 
             interact: ConsolePrompt {
-                mian_prompt: String::from("> "),
+                main_prompt: String::from("> "),
                 sub_prompt: String::from(""),
             },
             log: log,
@@ -142,6 +143,7 @@ where
                 file_address: None,
                 exc_ins_assets: Vec::new(),
                 cycle_times: None,
+                mac: None,
                 next_exc_ins: None,
                 next_exc_cmd: None,
             },
@@ -258,7 +260,7 @@ where
             self.current_cmd = Some(input.clone());
         }
         self.interact
-            .mian_prompt
+            .main_prompt
             .push_str(&format!("{} > ", input.clone()));
 
         // automatic file command execution output.
@@ -279,7 +281,7 @@ where
         Console::exc_clear(self);
 
         self.auto_exc.file_address = Some(self.read("请输入文件地址")?);
-        self.check.read_valid = true; // nead re-set in file_import.
+        self.check.read_valid = true; // need re-set in file_import.
         self.check.file_valid = true;
         let context = std::fs::read_to_string(&self.auto_exc.file_address.clone().unwrap())?;
         self.auto_exc = match toml::from_str::<ExecuteFile>(&context) {
@@ -385,6 +387,8 @@ where
                                                 "获取第一条主指令集失败，文件导入的指令集内容被污染，请重新导入文件。"
                                             )));
                                         }
+                                    } else {
+                                        Console::exc_clear(self);
                                     }
                                 }
                             }
@@ -438,6 +442,8 @@ where
                                                     "获取第一条主指令集失败，文件导入的指令集内容被污染，请重新导入文件。"
                                                 )));
                                             }
+                                        } else {
+                                            Console::exc_clear(self);
                                         }
                                     }
                                 }
@@ -484,12 +490,12 @@ where
                 if prompt == "" {
                     log.prompt_log(&format!(
                         "{}{}",
-                        self.interact.mian_prompt, self.interact.sub_prompt
+                        self.interact.main_prompt, self.interact.sub_prompt
                     ))
                 } else {
                     log.prompt_log(&format!(
                         "{}{}\r\n{}",
-                        self.interact.mian_prompt, self.interact.sub_prompt, prompt
+                        self.interact.main_prompt, self.interact.sub_prompt, prompt
                     ))
                 }
             }
@@ -506,7 +512,7 @@ where
             ConsoleStatus::InsAcqFromFile | ConsoleStatus::InsExecFromFile => {
                 self.file_read(prompt)
             }
-            ConsoleStatus::Invaild => {
+            ConsoleStatus::Invalid => {
                 self.refresh()?;
                 return Err(DataError::InvalidHeader {
                     expected: ("determined console status".to_string()),
@@ -555,7 +561,7 @@ where
     fn refresh(&mut self) -> Result<(), DataError> {
         self.status.previous = self.status.current.clone();
         self.status.current = match self.status.current {
-            ConsoleStatus::Invaild => ConsoleStatus::InsAcqFromTerminal,
+            ConsoleStatus::Invalid => ConsoleStatus::InsAcqFromTerminal,
             ConsoleStatus::InsAcqFromFile => {
                 if let Some(_) = self.auto_exc.next_exc_cmd {
                     ConsoleStatus::InsExecFromFile
@@ -563,14 +569,14 @@ where
                     self.prompt_clear();
                     ConsoleStatus::InsAcqFromFile
                 } else {
-                    ConsoleStatus::Invaild
+                    ConsoleStatus::Invalid
                 }
             }
             ConsoleStatus::InsAcqFromTerminal => {
                 if self.check.read_valid {
                     ConsoleStatus::InsExecFromTerminal
                 } else {
-                    ConsoleStatus::Invaild
+                    ConsoleStatus::Invalid
                 }
             }
             ConsoleStatus::InsExecFromFile => {
@@ -580,7 +586,7 @@ where
                     self.prompt_clear();
                     ConsoleStatus::InsAcqFromFile
                 } else {
-                    ConsoleStatus::Invaild
+                    ConsoleStatus::Invalid
                 }
             }
             ConsoleStatus::InsExecFromTerminal => match self.check.read_valid {
@@ -590,39 +596,47 @@ where
                             self.prompt_clear();
                             ConsoleStatus::InsAcqFromFile
                         } else {
-                            ConsoleStatus::Invaild
+                            ConsoleStatus::Invalid
                         }
                     } else {
                         ConsoleStatus::InsExecFromTerminal
                     }
                 }
-                false => ConsoleStatus::Invaild,
+                false => ConsoleStatus::Invalid,
             },
         };
 
-        if let ConsoleStatus::Invaild = self.status.current {
+        if let ConsoleStatus::Invalid = self.status.current {
             self.prompt_clear();
             self.status.previous = self.status.current.clone();
             self.status.current = ConsoleStatus::InsAcqFromTerminal;
         }
 
-        if self.status.current != self.status.previous {
-            println!(
-                "
-    + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +
-    |   控制台当前状态  |  {:?} -> {:?}   
-    + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +",
-                self.status.previous, self.status.current
-            );
-        }
+    //     if self.status.current != self.status.previous {
+    //         println!(
+    //             "
+    // + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +
+    // |   控制台当前状态  |  {:?} -> {:?}   
+    // + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +",
+    //             self.status.previous, self.status.current
+    //         );
+    //     }
 
         self.check_reset();
         Ok(())
     }
 
+    pub fn get_mac(&self) -> (bool, String) {
+        if let Some(mac_expect) = self.auto_exc.mac.clone() {
+            (true, mac_expect)
+        } else {
+            (false, "".to_string())
+        }
+    }
+
     /// Clear the console command cache
     fn prompt_clear(&mut self) {
-        self.interact.mian_prompt = String::from("> ");
+        self.interact.main_prompt = String::from("> ");
         self.interact.sub_prompt = String::from("");
     }
 
@@ -630,6 +644,7 @@ where
         self.auto_exc.file_address = None;
         self.auto_exc.exc_ins_assets.clear();
         self.auto_exc.cycle_times = None;
+        self.auto_exc.mac = None;
         self.auto_exc.next_exc_cmd = None;
         self.auto_exc.next_exc_ins = None;
     }
