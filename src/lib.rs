@@ -10,6 +10,8 @@ use crate::interface::ConsoleLog;
 use serde_derive::Deserialize;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 use thiserror::Error;
 use toml;
 
@@ -66,7 +68,7 @@ struct ExecuteFile {
 
     exc_ins_assets: Vec<ExecuteAssets>, // <collections> automatically execute instructions and command assets.
     cycle_times: Option<usize>, // <option, default one time> automatic execution cycle times.
-    mac: Option<String>, 
+    mac: Option<String>,
 
     next_exc_ins: Option<(usize, GenericCmd)>, // <populated by file_poll> next automatic execution instruction.
     next_exc_cmd: Option<(usize, GenericCmd)>, // <populated by file_poll> next auto-execute command.
@@ -74,7 +76,8 @@ struct ExecuteFile {
 
 #[derive(Deserialize, Debug)]
 struct ExecuteAssets {
-    exc_ins: GenericCmd, // <required> Automatic execution instruction.
+    exc_ins: GenericCmd,  // <required> Automatic execution instruction.
+    delay: Option<usize>, // delay time after the current instruction is completed.
     sub_cmd_assets: Option<Vec<SubCmd>>, // <option> Auto-execute command assets.
 }
 
@@ -95,6 +98,7 @@ where
     T: ConsoleLog,
 {
     status: Status,
+    delay: (usize, usize),
     check: ValidCheck,
 
     interact: ConsolePrompt,
@@ -126,6 +130,7 @@ where
                 current: ConsoleStatus::Invalid,
                 previous: ConsoleStatus::Invalid,
             },
+            delay: (0, 0),
             check: ValidCheck {
                 read_valid: false,
                 import_valid: false,
@@ -136,7 +141,7 @@ where
                 main_prompt: String::from("> "),
                 sub_prompt: String::from(""),
             },
-            log: log,
+            log,
             _input_invalid: invalid_info,
 
             auto_exc: ExecuteFile {
@@ -160,8 +165,42 @@ where
 
     /// called when a set of instructions has completed execution.
     pub fn taildowm(&mut self) {
-        if self.status.current != ConsoleStatus::InsAcqFromTerminal {
-            let _ = self.refresh();
+        match self.status.current {
+            // during the automated execution, no action is required.
+            ConsoleStatus::InsAcqFromFile => {
+                if 0 != self.delay.1 {
+                    match self.log.lock().map_err(|_| {
+                        DataError::Redaction(
+                            "log information prints mutex acquisition failure.".to_string(),
+                        )
+                    }) {
+                        Ok(log) => log.file_exc_log(&format!(" * 延时等待 {} ms", self.delay.1)),
+                        Err(_err_info) => {
+                            panic!("{}", _err_info);
+                        }
+                    }
+
+                    thread::sleep(Duration::from_millis(self.delay.1 as u64));
+                }
+                return;
+            }
+            // during the automated execution, no action is required.
+            ConsoleStatus::InsExecFromFile => {
+                return;
+            }
+            // this is the expected state, no action is required.
+            ConsoleStatus::InsAcqFromTerminal => {
+                return;
+            }
+            // constrain the unexpected invalid state and return to the terminal to obtain the instruction state.
+            ConsoleStatus::Invalid => {
+                let _ = self.refresh();
+            }
+            // 1. a manual test (the last command is a subcommand) has been completed, and the terminal has returned to the command acquisition state;
+            // 2. automated file import has been completed, and the file acquisition command state has been entered.
+            ConsoleStatus::InsExecFromTerminal => {
+                let _ = self.refresh();
+            }
         }
     }
 
@@ -331,6 +370,12 @@ where
                 None => {
                     if let Some(exc_assets) = self.auto_exc.exc_ins_assets.get(0) {
                         self.auto_exc.next_exc_ins = Some((0, exc_assets.exc_ins.clone()));
+                        // set delay time.
+                        if let Some(delay) = exc_assets.delay {
+                            self.delay = (delay, self.delay.0);
+                        } else {
+                            self.delay = (0, self.delay.0);
+                        }
                     } else {
                         Console::exc_clear(self);
                         return Err(DataError::Redaction(format!(
@@ -363,6 +408,12 @@ where
                                 {
                                     self.auto_exc.next_exc_ins =
                                         Some((ins_index + 1, exc_assets.exc_ins.clone()));
+                                    // set delay time.
+                                    if let Some(delay) = exc_assets.delay {
+                                        self.delay = (delay, self.delay.0);
+                                    } else {
+                                        self.delay = (0, self.delay.0);
+                                    }
                                 } else {
                                     // End of file instruction set traversal.
                                     self.auto_exc.next_exc_ins = None;
@@ -381,6 +432,12 @@ where
                                         {
                                             self.auto_exc.next_exc_ins =
                                                 Some((0, exc_assets.exc_ins.clone()));
+                                            // set delay time.
+                                            if let Some(delay) = exc_assets.delay {
+                                                self.delay = (delay, self.delay.0);
+                                            } else {
+                                                self.delay = (0, self.delay.0);
+                                            }
                                         } else {
                                             Console::exc_clear(self);
                                             return Err(DataError::Redaction(format!(
@@ -417,6 +474,12 @@ where
                                         self.auto_exc.next_exc_cmd = None;
                                         self.auto_exc.next_exc_ins =
                                             Some((ins_index + 1, exc_assets.exc_ins.clone()));
+                                        // set delay time.
+                                        if let Some(delay) = exc_assets.delay {
+                                            self.delay = (delay, self.delay.0);
+                                        } else {
+                                            self.delay = (0, self.delay.0);
+                                        }
                                     } else {
                                         // End of file instruction set traversal.
                                         self.auto_exc.next_exc_ins = None;
@@ -436,6 +499,12 @@ where
                                             {
                                                 self.auto_exc.next_exc_ins =
                                                     Some((0, exc_assets.exc_ins.clone()));
+                                                // set delay time.
+                                                if let Some(delay) = exc_assets.delay {
+                                                    self.delay = (delay, self.delay.0);
+                                                } else {
+                                                    self.delay = (0, self.delay.0);
+                                                }
                                             } else {
                                                 Console::exc_clear(self);
                                                 return Err(DataError::Redaction(format!(
@@ -612,15 +681,15 @@ where
             self.status.current = ConsoleStatus::InsAcqFromTerminal;
         }
 
-    //     if self.status.current != self.status.previous {
-    //         println!(
-    //             "
-    // + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +
-    // |   控制台当前状态  |  {:?} -> {:?}   
-    // + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +",
-    //             self.status.previous, self.status.current
-    //         );
-    //     }
+        if self.status.current != self.status.previous {
+            println!(
+                "
+    + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +
+    |   控制台当前状态  |  {:?} -> {:?}   
+    + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +",
+                self.status.previous, self.status.current
+            );
+        }
 
         self.check_reset();
         Ok(())
@@ -634,7 +703,7 @@ where
         }
     }
 
-    /// Clear the console command cache
+    /// Clear the console command cache.
     fn prompt_clear(&mut self) {
         self.interact.main_prompt = String::from("> ");
         self.interact.sub_prompt = String::from("");
