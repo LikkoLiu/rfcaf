@@ -9,8 +9,9 @@ pub mod interface;
 use crate::interface::ConsoleLog;
 use serde_derive::Deserialize;
 use std::io::{self, Write};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use thiserror::Error;
 use toml;
@@ -76,8 +77,9 @@ struct ExecuteFile {
 
 #[derive(Deserialize, Debug)]
 struct ExecuteAssets {
-    exc_ins: GenericCmd,  // <required> Automatic execution instruction.
-    delay: Option<usize>, // delay time after the current instruction is completed.
+    exc_ins: GenericCmd,            // <required> Automatic execution instruction.
+    delay: Option<usize>,           // delay time after the current instruction is completed.
+    t_expect_finish: Option<usize>, // delay time after the current instruction is completed.
     sub_cmd_assets: Option<Vec<SubCmd>>, // <option> Auto-execute command assets.
 }
 
@@ -99,6 +101,7 @@ where
 {
     status: Status,
     delay: (usize, usize),
+    t_expect_finish: (usize, usize, usize), // (valid, next, previous)
     check: ValidCheck,
 
     interact: ConsolePrompt,
@@ -131,6 +134,7 @@ where
                 previous: ConsoleStatus::Invalid,
             },
             delay: (0, 0),
+            t_expect_finish: (0, 0, 0),
             check: ValidCheck {
                 read_valid: false,
                 import_valid: false,
@@ -182,10 +186,12 @@ where
 
                     thread::sleep(Duration::from_millis(self.delay.1 as u64));
                 }
+                self.t_expect_finish = (self.t_expect_finish.1, self.t_expect_finish.1, self.t_expect_finish.2);
                 return;
             }
             // during the automated execution, no action is required.
             ConsoleStatus::InsExecFromFile => {
+                // this branch does not exist in theory
                 return;
             }
             // this is the expected state, no action is required.
@@ -376,6 +382,17 @@ where
                         } else {
                             self.delay = (0, self.delay.0);
                         }
+                        // set expect finish time.
+                        if let Some(t_expect_finish) = exc_assets.t_expect_finish {
+                            self.t_expect_finish = (
+                                self.t_expect_finish.0,
+                                t_expect_finish,
+                                self.t_expect_finish.1,
+                            );
+                        } else {
+                            self.t_expect_finish =
+                                (self.t_expect_finish.0, 0, self.t_expect_finish.1);
+                        }
                     } else {
                         Console::exc_clear(self);
                         return Err(DataError::Redaction(format!(
@@ -414,6 +431,17 @@ where
                                     } else {
                                         self.delay = (0, self.delay.0);
                                     }
+                                    // set expect finish time.
+                                    if let Some(t_expect_finish) = exc_assets.t_expect_finish {
+                                        self.t_expect_finish = (
+                                            self.t_expect_finish.0,
+                                            t_expect_finish,
+                                            self.t_expect_finish.1,
+                                        );
+                                    } else {
+                                        self.t_expect_finish =
+                                            (self.t_expect_finish.0, 0, self.t_expect_finish.1);
+                                    }
                                 } else {
                                     // End of file instruction set traversal.
                                     self.auto_exc.next_exc_ins = None;
@@ -437,6 +465,22 @@ where
                                                 self.delay = (delay, self.delay.0);
                                             } else {
                                                 self.delay = (0, self.delay.0);
+                                            }
+                                            // set expect finish time.
+                                            if let Some(t_expect_finish) =
+                                                exc_assets.t_expect_finish
+                                            {
+                                                self.t_expect_finish = (
+                                                    self.t_expect_finish.0,
+                                                    t_expect_finish,
+                                                    self.t_expect_finish.1,
+                                                );
+                                            } else {
+                                                self.t_expect_finish = (
+                                                    self.t_expect_finish.0,
+                                                    0,
+                                                    self.t_expect_finish.1,
+                                                );
                                             }
                                         } else {
                                             Console::exc_clear(self);
@@ -480,6 +524,17 @@ where
                                         } else {
                                             self.delay = (0, self.delay.0);
                                         }
+                                        // set expect finish time.
+                                        if let Some(t_expect_finish) = exc_assets.t_expect_finish {
+                                            self.t_expect_finish = (
+                                                self.t_expect_finish.0,
+                                                t_expect_finish,
+                                                self.t_expect_finish.1,
+                                            );
+                                        } else {
+                                            self.t_expect_finish =
+                                                (self.t_expect_finish.0, 0, self.t_expect_finish.1);
+                                        }
                                     } else {
                                         // End of file instruction set traversal.
                                         self.auto_exc.next_exc_ins = None;
@@ -504,6 +559,22 @@ where
                                                     self.delay = (delay, self.delay.0);
                                                 } else {
                                                     self.delay = (0, self.delay.0);
+                                                }
+                                                // set expect finish time.
+                                                if let Some(t_expect_finish) =
+                                                    exc_assets.t_expect_finish
+                                                {
+                                                    self.t_expect_finish = (
+                                                        self.t_expect_finish.0,
+                                                        t_expect_finish,
+                                                        self.t_expect_finish.1,
+                                                    );
+                                                } else {
+                                                    self.t_expect_finish = (
+                                                        self.t_expect_finish.0,
+                                                        0,
+                                                        self.t_expect_finish.1,
+                                                    );
                                                 }
                                             } else {
                                                 Console::exc_clear(self);
@@ -681,15 +752,15 @@ where
             self.status.current = ConsoleStatus::InsAcqFromTerminal;
         }
 
-        if self.status.current != self.status.previous {
-            println!(
-                "
-    + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +
-    |   控制台当前状态  |  {:?} -> {:?}   
-    + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +",
-                self.status.previous, self.status.current
-            );
-        }
+        //     if self.status.current != self.status.previous {
+        //         println!(
+        //             "
+        // + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +
+        // |   控制台当前状态  |  {:?} -> {:?}
+        // + - - - - - - - - - + - - - - - - - - - - - - - - - - - - - - +",
+        //             self.status.previous, self.status.current
+        //         );
+        //     }
 
         self.check_reset();
         Ok(())
@@ -701,6 +772,61 @@ where
         } else {
             (false, "".to_string())
         }
+    }
+
+    pub fn thread_interact(&self, sender: Sender<Result<(), ()>>) -> JoinHandle<()> {
+        // the current t test has completed all cache instruction reads.
+        let lag_time = self.t_expect_finish.0;
+        match self.log.lock().map_err(|_| {
+            DataError::Redaction("log information prints mutex acquisition failure.".to_string())
+        }) {
+            Ok(log) => log.file_exc_log(&format!(
+                " * {}{}",
+                match lag_time {
+                    0 => {
+                        "".to_string()
+                    }
+                    _ => {
+                        lag_time.to_string()
+                    }
+                },
+                match lag_time {
+                    0 => {
+                        "等待手动停止测试"
+                    }
+                    _ => {
+                        "ms 后自动停止测试"
+                    }
+                }
+            )),
+            Err(_err_info) => {
+                panic!("{}", _err_info);
+            }
+        }
+
+        let stdin_thread = std::thread::spawn(move || match lag_time {
+            0 => {
+                let mut input = String::from("");
+                if let Ok(_) = std::io::stdin().read_line(&mut input) {
+                    let _ = sender.send(Ok(()));
+                }
+            }
+            _ => {
+                thread::sleep(Duration::from_millis(lag_time as u64));
+                let _ = sender.send(Ok(()));
+            }
+        });
+
+        match self.log.lock().map_err(|_| {
+            DataError::Redaction("log information prints mutex acquisition failure.".to_string())
+        }) {
+            Ok(log) => log.file_exc_log(&format!("测试流程已退出。")),
+            Err(_err_info) => {
+                panic!("{}", _err_info);
+            }
+        }
+
+        stdin_thread
     }
 
     /// Clear the console command cache.
