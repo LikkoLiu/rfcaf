@@ -218,15 +218,16 @@ where
 
     /// input character check.
     fn input_check(&mut self, input: &str) -> Result<bool, DataError> {
-        if !input.chars().all(|c| {
-            c.is_alphanumeric()
-                || c == '.'
-                || c == '+'
-                || c == '-'
-                || c == '|'
-                || c == '@'
-                || c == ' '
-        }) || input == "".to_string()
+        // if !input.chars().all(|c| {
+        //     c.is_alphanumeric()
+        //         || c == '.'
+        //         || c == '+'
+        //         || c == '-'
+        //         || c == '|'
+        //         || c == '@'
+        //         || c == ' '
+        // }) || input == "".to_string()
+        if true
         {
             Err(DataError::InvalidHeader {
                 expected: ("specified command characters".to_string()),
