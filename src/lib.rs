@@ -217,7 +217,7 @@ where
     }
 
     /// input character check.
-    fn input_check(&mut self, input: &str) -> Result<bool, DataError> {
+    fn input_check(&mut self, _input: &str) -> Result<bool, DataError> {
         // if !input.chars().all(|c| {
         //     c.is_alphanumeric()
         //         || c == '.'
