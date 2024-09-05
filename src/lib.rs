@@ -227,7 +227,7 @@ where
         //         || c == '@'
         //         || c == ' '
         // }) || input == "".to_string()
-        if true
+        if false
         {
             Err(DataError::InvalidHeader {
                 expected: ("specified command characters".to_string()),
